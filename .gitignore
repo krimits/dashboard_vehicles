@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+ENV/
+env/
+*.egg-info/
+.eggs/
+dist/
+build/
+
+# Runtime / local dashboard storage (uploads, active workbook metadata)
+dashboard_data/
+
+# Secrets
+.env
+.env.*
+!.env.example
+
+# IDE / OS
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Optional: τοπικά Excel δελτία (μεγάλα αρχεία) — αφαίρεσε τις γραμμές αν θέλεις να τα κάνεις commit
+# *.xls
+# *.xlsx
+# *.xlsm
