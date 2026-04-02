@@ -101,6 +101,16 @@ class DashboardHtmlTests(unittest.TestCase):
         self.assertIn("detailsTree", html)
         self.assertIn("setInterval(loadDashboardData", html)
 
+    def test_dashboard_html_contains_comparative_tab(self):
+        module = load_module()
+
+        html = module.build_dashboard_html()
+
+        self.assertIn('id="comparative"', html)
+        self.assertIn("Συγκριτικά Στατιστικά στοιχεία", html)
+        self.assertIn("refreshLiveComparativeUI", html)
+        self.assertIn("live_fleet_comparative_baseline", html)
+
     def test_dashboard_html_and_messages_do_not_contain_garbled_greek(self):
         module = load_module()
 
