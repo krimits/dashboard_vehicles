@@ -46,6 +46,34 @@ class FindLatestExcelFileTests(unittest.TestCase):
             self.assertEqual(result, newer)
 
 
+class CollectionDailyAvailabilityParserTests(unittest.TestCase):
+    def test_parses_rows_after_header_until_total(self):
+        module = load_module()
+        rows = [
+            [None, None],
+            [
+                "ΟΧΗΜΑΤΑ ΑΠΟΚΟΜΙΔΗΣ (ΗΜΕΡΗΣΙΑ ΔΙΑΘΕΣΙΜΟΤΗΤΑ)",
+                None,
+            ],
+            ["ΜΙΚΡΑ 4Τ (ΜΥΛΟΙ) (IVECO)", 5],
+            ["ΝΕΑ ΜΙΚΡΑ 2Τ (ΠΡΕΣΣΑΚΙΑ)", 3],
+            ["ΣΥΝΟΛΟ (TOTAL)", 65],
+        ]
+        result = module.parse_collection_daily_availability(rows)
+        self.assertEqual(
+            result,
+            [
+                {"name": "ΜΙΚΡΑ 4Τ (ΜΥΛΟΙ) (IVECO)", "count": 5},
+                {"name": "ΝΕΑ ΜΙΚΡΑ 2Τ (ΠΡΕΣΣΑΚΙΑ)", "count": 3},
+            ],
+        )
+
+    def test_returns_empty_when_header_missing(self):
+        module = load_module()
+        rows = [["Άλλο κείμενο", 1], ["Κατηγορία", 2]]
+        self.assertEqual(module.parse_collection_daily_availability(rows), [])
+
+
 class WorkbookParsingTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -60,6 +88,8 @@ class WorkbookParsingTests(unittest.TestCase):
         self.assertEqual(payload["summary"]["real_fleet"]["total"], 164)
         self.assertEqual(payload["summary"]["real_fleet"]["in_service"], 95)
         self.assertEqual(payload["summary"]["real_fleet"]["broken"], 69)
+        self.assertIn("collection_daily_availability", payload["summary"])
+        self.assertIsInstance(payload["summary"]["collection_daily_availability"], list)
 
     def test_builds_category_drilldown_with_vehicle_rows(self):
         payload = self.module.load_dashboard_payload(EXCEL_PATH)
@@ -110,6 +140,16 @@ class DashboardHtmlTests(unittest.TestCase):
         self.assertIn("Συγκριτικά Στατιστικά στοιχεία", html)
         self.assertIn("refreshLiveComparativeUI", html)
         self.assertIn("live_fleet_comparative_baseline", html)
+
+    def test_dashboard_html_contains_overview_bar_chart_containers(self):
+        module = load_module()
+
+        html = module.build_dashboard_html()
+
+        self.assertIn('id="overviewRealFleetBarChart"', html)
+        self.assertIn('id="overviewCollectionBarChart"', html)
+        self.assertIn("overviewRealFleetBarChart", html)
+        self.assertIn("collection_daily_availability", html)
 
     def test_dashboard_html_and_messages_do_not_contain_garbled_greek(self):
         module = load_module()
