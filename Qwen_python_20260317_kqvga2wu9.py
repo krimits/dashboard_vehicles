@@ -223,6 +223,81 @@ def load_sheet_rows(workbook_path: Path, sheet_name: str | int) -> list[list[Any
     return frame.where(pd.notna(frame), None).values.tolist()
 
 
+def resolve_summary_sheet_selector(workbook_path: Path) -> str | int:
+    """Προτιμά φύλλο που περιέχει «ΣΥΝΟΛΙΚΗ» και «ΑΠΕΙΚΟΝΙΣΗ» στο όνομα, αλλιώς δείκτης 0."""
+    engine = engine_for_path(workbook_path)
+    if not engine:
+        return 0
+    try:
+        with pd.ExcelFile(workbook_path, engine=engine) as xl:
+            for name in xl.sheet_names:
+                label = clean_text(name) or ""
+                if "\u03a3\u03a5\u039d\u039f\u039b\u0399\u039a\u0397" in label and "\u0391\u03a0\u0395\u0399\u039a\u039f\u039d\u0399\u03a3\u0397" in label:
+                    return name
+    except Exception:
+        return 0
+    return 0
+
+
+def try_parse_positive_int(value: Any) -> int | None:
+    """Ακέραιος από κελί· None αν λείπει ή δεν είναι αριθμός (για στήλη πλήθους)."""
+    if value is None or pd.isna(value):
+        return None
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return int(value)
+    text = clean_text(value)
+    if not text or text == "-":
+        return None
+    text = text.replace(",", ".")
+    try:
+        return int(float(text))
+    except ValueError:
+        return None
+
+
+def parse_collection_daily_availability(rows: list[list[Any]]) -> list[dict[str, Any]]:
+    """
+    Εξάγει τον πίνακα «ΟΧΗΜΑΤΑ ΑΠΟΚΟΜΙΔΗΣ (ΗΜΕΡΗΣΙΑ ΔΙΑΘΕΣΙΜΟΤΗΤΑ)» από τις γραμμές του φύλλου συνόψεως.
+    Σταματά πριν τη γραμμή ΣΥΝΟΛΟ. Αν δεν βρεθεί κεφαλίδα, επιστρέφει κενή λίστα.
+    """
+    out: list[dict[str, Any]] = []
+    start: int | None = None
+    for i, row in enumerate(rows):
+        blob = " ".join(t.upper() for t in (clean_text(c) or "" for c in row) if t)
+        if "\u039f\u03a7\u0397\u039c\u0391\u03a4\u0391 \u0391\u03a0\u039f\u039a\u039f\u039c\u0399\u0394\u0397\u03a3" in blob and (
+            "\u0397\u039c\u0395\u03a1\u0397\u03a3\u0399\u0391" in blob or "\u0394\u0399\u0391\u0398\u0395\u03a3\u0399\u039c\u039f\u03a4\u0397\u03a4\u0391" in blob
+        ):
+            start = i + 1
+            break
+    if start is None:
+        return []
+    for j in range(start, len(rows)):
+        row = rows[j]
+        limit = len(row) if row else 0
+        stop = False
+        for c in range(limit):
+            t = clean_text(row[c]) if c < limit else None
+            if not t:
+                continue
+            if "\u03a3\u03a5\u039d\u039f\u039b\u039f" in t.upper():
+                stop = True
+                break
+            if not any(ch.isalpha() for ch in t):
+                continue
+            count: int | None = None
+            for d in range(c + 1, limit):
+                count = try_parse_positive_int(row[d])
+                if count is not None:
+                    out.append({"name": t, "count": count})
+                    break
+            break
+        if stop:
+            break
+    return out
+
+
 def normalize_management_category(raw_name: str, occurrence: int) -> str:
     name = clean_text(raw_name) or ""
     name = MANAGEMENT_CATEGORY_ALIASES.get(name, name)
@@ -301,7 +376,8 @@ def parse_explicit_exclusions(workbook_path: Path) -> dict[str, str]:
 
 
 def parse_summary_sheet(workbook_path: Path) -> dict[str, Any]:
-    rows = load_sheet_rows(workbook_path, 0)
+    sheet = resolve_summary_sheet_selector(workbook_path)
+    rows = load_sheet_rows(workbook_path, sheet)
     if len(rows) < 28:
         raise DashboardDataError("Το φύλλο συνολικής απεικόνισης είναι μικρότερο από το αναμενόμενο.")
 
@@ -343,6 +419,8 @@ def parse_summary_sheet(workbook_path: Path) -> dict[str, Any]:
     if len(categories_all) != 22 or len(categories_real) != 22:
         raise DashboardDataError("Δεν χαρτογραφήθηκαν σωστά και οι 22 κατηγορίες του summary.")
 
+    collection_daily_availability = parse_collection_daily_availability(rows)
+
     return {
         "title": clean_text(rows[0][0]) or "Dashboard Κατάστασης Στόλου Οχημάτων",
         "report_date": report_date,
@@ -358,6 +436,7 @@ def parse_summary_sheet(workbook_path: Path) -> dict[str, Any]:
             "total": parse_number(rows[14][13]),
         },
         "collection_vehicles_total": parse_number(rows[27][13]),
+        "collection_daily_availability": collection_daily_availability,
         "categories_all": categories_all,
         "categories_real": categories_real,
         "categories_real_map": real_map,
@@ -508,6 +587,7 @@ def load_dashboard_payload(workbook_path: Path) -> dict[str, Any]:
             "all_vehicles": summary_data["all_vehicles"],
             "real_fleet": summary_data["real_fleet"],
             "collection_vehicles_total": summary_data["collection_vehicles_total"],
+            "collection_daily_availability": summary_data["collection_daily_availability"],
             "report_date": summary_data["report_date"],
             "report_time": summary_data["report_time"],
             "title": summary_data["title"],
@@ -669,6 +749,18 @@ def build_dashboard_html() -> str:
         <div class="card">
           <h2 class="section-title">Top διαθεσιμότητα ανά κατηγορία</h2>
           <div id="availabilityChart" class="chart"></div>
+        </div>
+      </div>
+      <div class="grid charts" style="margin-top: 18px;">
+        <div class="card">
+          <h2 class="section-title">Πραγματική απεικόνιση ανά κατηγορία (σε λειτουργία / με βλάβη)</h2>
+          <div class="status-line">Πηγή: φύλλο συνολικής απεικόνισης — πίνακας πραγματικής απεικόνισης (22 κατηγορίες).</div>
+          <div id="overviewRealFleetBarChart" class="chart"></div>
+        </div>
+        <div class="card">
+          <h2 class="section-title">Οχήματα αποκομιδής — ημερήσια διαθεσιμότητα</h2>
+          <div class="status-line">Πηγή: ίδιο φύλλο — πίνακας «ΟΧΗΜΑΤΑ ΑΠΟΚΟΜΙΔΗΣ (ΗΜΕΡΗΣΙΑ ΔΙΑΘΕΣΙΜΟΤΗΤΑ)».</div>
+          <div id="overviewCollectionBarChart" class="chart"></div>
         </div>
       </div>
     </section>
@@ -1259,6 +1351,51 @@ def build_dashboard_html() -> str:
         xaxis: {{ tickangle: -35 }},
         yaxis: {{ title: 'Διαθεσιμότητα %', range: [0, 100] }}
       }}, {{ responsive: true }});
+
+      const allCats = data.categories || [];
+      const catNames = allCats.map((item) => item.name);
+      Plotly.react('overviewRealFleetBarChart', [
+        {{
+          type: 'bar',
+          name: 'Σε λειτουργία',
+          x: catNames,
+          y: allCats.map((item) => item.summary.in_service),
+          marker: {{ color: '#0f9d58' }},
+        }},
+        {{
+          type: 'bar',
+          name: 'Με βλάβη',
+          x: catNames,
+          y: allCats.map((item) => item.summary.broken),
+          marker: {{ color: '#d93025' }},
+        }},
+      ], {{
+        barmode: 'group',
+        xaxis: {{ tickangle: -45, title: 'Κατηγορία' }},
+        yaxis: {{ title: 'Πλήθος οχημάτων' }},
+        height: Math.max(440, catNames.length * 24),
+        margin: {{ t: 50, b: 220, l: 50, r: 24 }},
+        legend: {{ orientation: 'h', y: 1.12 }},
+      }}, {{ responsive: true }});
+
+      const coll = data.summary.collection_daily_availability || [];
+      const collEl = document.getElementById('overviewCollectionBarChart');
+      if (coll.length) {{
+        collEl.innerHTML = '';
+        Plotly.react('overviewCollectionBarChart', [{{
+          type: 'bar',
+          x: coll.map((item) => item.name),
+          y: coll.map((item) => item.count),
+          marker: {{ color: '#1a73e8' }},
+        }}], {{
+          xaxis: {{ tickangle: -35, title: 'Κατηγορία' }},
+          yaxis: {{ title: 'Διαθέσιμα οχήματα' }},
+          margin: {{ t: 20, b: 160, l: 50, r: 20 }},
+          height: Math.max(360, coll.length * 36),
+        }}, {{ responsive: true }});
+      }} else {{
+        collEl.innerHTML = '<div class="empty">Δεν βρέθηκε πίνακας οχημάτων αποκομιδής (ημερήσια διαθεσιμότητα) στο φύλλο συνόψεως.</div>';
+      }}
     }}
 
     function renderAvailability(data) {{
