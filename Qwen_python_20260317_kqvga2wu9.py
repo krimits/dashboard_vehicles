@@ -611,6 +611,26 @@ def build_dashboard_html() -> str:
     .status-line {{ margin-bottom: 8px; color: var(--muted); font-size: 14px; }}
     .chart {{ min-height: 320px; }}
     .empty {{ padding: 14px; color: var(--muted); font-style: italic; }}
+    .compare-toolbar {{ display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 16px; }}
+    .compare-toolbar .btn {{
+      border: 0; background: white; color: var(--accent); padding: 10px 16px;
+      border-radius: 999px; font-weight: 700; cursor: pointer;
+      box-shadow: 0 4px 12px rgba(25, 63, 119, 0.1); border: 1px solid var(--line);
+    }}
+    .compare-toolbar .btn:hover {{ background: rgba(30, 60, 114, 0.06); }}
+    .compare-meta {{ font-size: 14px; color: var(--muted); margin-bottom: 12px; }}
+    .delta-pos {{ color: #0b6b3c; font-weight: 800; }}
+    .delta-neg {{ color: #a7271d; font-weight: 800; }}
+    .delta-zero {{ color: var(--muted); font-weight: 600; }}
+    .compare-kpis {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 14px; margin-bottom: 18px; }}
+    .compare-kpi {{ background: var(--card); border-radius: 14px; padding: 16px; border: 1px solid var(--line); text-align: center; }}
+    .compare-kpi .val {{ font-size: 28px; font-weight: 800; margin-bottom: 6px; }}
+    .compare-kpi .lbl {{ font-size: 13px; color: var(--muted); }}
+    .compare-table-wrap {{ overflow-x: auto; }}
+    .compare-table {{ width: 100%; border-collapse: collapse; font-size: 13px; }}
+    .compare-table th, .compare-table td {{ padding: 8px 10px; border-bottom: 1px solid var(--line); text-align: left; }}
+    .compare-table th {{ background: rgba(20, 59, 117, 0.08); font-weight: 700; }}
+    .compare-table th.sub {{ font-size: 12px; font-weight: 600; }}
     @media (max-width: 980px) {{
       .tree-node summary {{ grid-template-columns: 1fr 1fr; }}
     }}
@@ -633,6 +653,7 @@ def build_dashboard_html() -> str:
       <button class="tab" data-tab="availability">Διαθεσιμότητα</button>
       <button class="tab" data-tab="workshops">Συνεργεία</button>
       <button class="tab" data-tab="details">Λεπτομέρειες</button>
+      <button class="tab" data-tab="comparative">Συγκριτικά Στατιστικά στοιχεία</button>
       <button class="tab" data-tab="source">Πηγή και Έλεγχοι</button>
     </div>
 
@@ -696,6 +717,84 @@ def build_dashboard_html() -> str:
       </div>
     </section>
 
+    <section class="tab-panel" id="comparative">
+      <div class="card">
+        <h2 class="section-title">Συγκριτικά στατιστικά στοιχεία</h2>
+        <div class="status-line">Σύγκριση διαθεσιμότητας στόλου (όλα τα οχήματα φύλλου) και ανά κατηγορία πραγματικού στόλου, με βάση τα δεδομένα του API — ίδια πηγή με το υπόλοιπο dashboard.</div>
+        <div class="compare-toolbar">
+          <button type="button" class="btn" onclick="setLiveComparativeBaseline()">Ορισμός τρέχουσας κατάστασης ως σημείο αναφοράς</button>
+          <button type="button" class="btn" onclick="clearLiveComparativeBaseline()">Διαγραφή σημείου αναφοράς</button>
+          <button type="button" class="btn" onclick="loadLiveDemoComparison()">Επίδειξη σύγκρισης (demo)</button>
+        </div>
+        <p class="compare-meta" id="compareMeta"></p>
+        <div id="compareNoBaseline" class="alert warning" style="display: none;">
+          <strong>Οδηγίες:</strong> Πριν ανεβάσετε νέο Excel από το <a href="/admin">Admin</a>, πατήστε «Ως σημείο αναφοράς» για να αποθηκευτεί η τρέχουσα κατάσταση του browser.
+          Μετά το upload και την ανανέωση δεδομένων, εδώ εμφανίζεται η σύγκριση (γενικά και ανά κατηγορία). Εναλλακτικά χρησιμοποιήστε «Επίδειξη» για δοκιμή.
+        </div>
+        <div id="compareContent" style="display: none;">
+          <div class="alert success" id="compareExecutive"></div>
+          <div class="compare-kpis">
+            <div class="compare-kpi" id="cmpKpiPrev">
+              <div class="val" id="cmpPrevAvail">—</div>
+              <div class="lbl">Προηγ. — % διαθεσιμότητας (όλα τα οχήματα)</div>
+            </div>
+            <div class="compare-kpi" id="cmpKpiCurr">
+              <div class="val" id="cmpCurrAvail">—</div>
+              <div class="lbl">Τρέχον — % διαθεσιμότητας</div>
+            </div>
+            <div class="compare-kpi" id="cmpDeltaCard">
+              <div class="val" id="cmpDeltaAvail">—</div>
+              <div class="lbl">Διαφορά (π.μ.)</div>
+            </div>
+            <div class="compare-kpi">
+              <div class="val" id="cmpDeltaOps">—</div>
+              <div class="lbl">Δ σε οχήματα σε λειτουργία</div>
+            </div>
+          </div>
+          <div class="grid charts" style="margin-top: 16px;">
+            <div class="card">
+              <h2 class="section-title">% διαθεσιμότητας ανά κατηγορία (πραγματικός στόλος)</h2>
+              <div id="compareAvailabilityChart" class="chart"></div>
+            </div>
+            <div class="card">
+              <h2 class="section-title">Σύνολο στόλου: σε λειτουργία / με βλάβη (όλα τα οχήματα)</h2>
+              <div id="compareTotalsChart" class="chart"></div>
+            </div>
+          </div>
+          <div class="card" style="margin-top: 18px;">
+            <h2 class="section-title">Αναλυτικός πίνακας ανά κατηγορία</h2>
+            <div class="compare-table-wrap">
+              <table class="compare-table">
+                <thead>
+                  <tr>
+                    <th rowspan="2">Κατηγορία</th>
+                    <th colspan="2" class="sub">Διαθεσιμότητα %</th>
+                    <th rowspan="2">Δ (π.μ.)</th>
+                    <th colspan="2" class="sub">Σε λειτουργία</th>
+                    <th colspan="2" class="sub">Με βλάβη</th>
+                    <th rowspan="2">Τάση</th>
+                  </tr>
+                  <tr>
+                    <th class="sub">Προηγ.</th>
+                    <th class="sub">Τρέχ.</th>
+                    <th class="sub">Προηγ.</th>
+                    <th class="sub">Τρέχ.</th>
+                    <th class="sub">Προηγ.</th>
+                    <th class="sub">Τρέχ.</th>
+                  </tr>
+                </thead>
+                <tbody id="compareCategoryBody"></tbody>
+              </table>
+            </div>
+          </div>
+          <div class="card" style="margin-top: 18px;">
+            <h2 class="section-title">Σύγκριση κατανομής ανά συνεργείο / κατάσταση</h2>
+            <div id="compareWorkshopChart" class="chart"></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
     <section class="tab-panel" id="source">
       <div class="card meta-box">
         <h2 class="section-title">Πηγή και έλεγχοι</h2>
@@ -710,6 +809,309 @@ def build_dashboard_html() -> str:
 
   <script>
     let lastVersion = null;
+    const LS_LIVE_BASELINE = 'live_fleet_comparative_baseline';
+    let lastComparisonShape = null;
+    let liveDemoPrevious = null;
+    let liveCompareSource = null;
+
+    function apiPayloadToComparisonShape(data) {{
+      const all = data.summary.all_vehicles;
+      const real = data.summary.real_fleet;
+      const συνεργεία = {{}};
+      (data.workshops || []).forEach((w) => {{ συνεργεία[w.name] = w.count; }});
+      const κατηγορίες = (data.categories || []).map((c) => ({{
+        κατηγορία: c.name,
+        σε_λειτουργία: c.summary.in_service,
+        με_βλαβη: c.summary.broken,
+        συνολο: c.summary.total,
+      }}));
+      return {{
+        ημερομηνία: data.summary.report_date || null,
+        ώρα: data.summary.report_time || null,
+        κατηγορίες,
+        συνεργεία,
+        συνολικά: {{
+          ολα_τα_οχηματα: all.total,
+          σε_λειτουργία: all.in_service,
+          με_βλαβη: all.broken,
+          πραγματικος_στολος: real.total,
+          οχηματα_αποκομιδης: data.summary.collection_vehicles_total,
+        }},
+      }};
+    }}
+
+    function validateComparisonShape(d) {{
+      if (!d || !d.συνολικά || !Array.isArray(d.κατηγορίες)) return false;
+      const s = d.συνολικά;
+      return typeof s.σε_λειτουργία === 'number' && typeof s.με_βλαβη === 'number';
+    }}
+
+    function loadLiveBaselineFromStorage() {{
+      try {{
+        const raw = localStorage.getItem(LS_LIVE_BASELINE);
+        if (!raw) return null;
+        const p = JSON.parse(raw);
+        return validateComparisonShape(p) ? p : null;
+      }} catch (e) {{
+        return null;
+      }}
+    }}
+
+    function deepCloneShape(o) {{
+      return JSON.parse(JSON.stringify(o));
+    }}
+
+    function fleetAvailabilityPercent(shape) {{
+      const t = shape.συνολικά.ολα_τα_οχηματα || (shape.συνολικά.σε_λειτουργία + shape.συνολικά.με_βλαβη);
+      if (!t) return 0;
+      return (shape.συνολικά.σε_λειτουργία / t) * 100;
+    }}
+
+    function catAvailability(cat) {{
+      if (!cat.συνολο) return 0;
+      return (cat.σε_λειτουργία / cat.συνολο) * 100;
+    }}
+
+    function categoryMapByName(shape) {{
+      const m = {{}};
+      (shape.κατηγορίες || []).forEach((c) => {{ m[c.κατηγορία] = c; }});
+      return m;
+    }}
+
+    function formatCompareDelta(n, suffix) {{
+      if (n === null || n === undefined || Number.isNaN(n)) return '—';
+      const rounded = typeof n === 'number' ? n.toFixed(1) : String(n);
+      const cls = n === 0 ? 'delta-zero' : (n > 0 ? 'delta-pos' : 'delta-neg');
+      const sign = n > 0 ? '+' : '';
+      return `<span class="${{cls}}">${{sign}}${{rounded}}${{suffix}}</span>`;
+    }}
+
+    function setLiveComparativeBaseline() {{
+      if (!lastComparisonShape || !validateComparisonShape(lastComparisonShape)) {{
+        alert('Δεν υπάρχουν φορτωμένα δεδομένα για αποθήκευση.');
+        return;
+      }}
+      localStorage.setItem(LS_LIVE_BASELINE, JSON.stringify(lastComparisonShape));
+      liveDemoPrevious = null;
+      liveCompareSource = 'baseline';
+      refreshLiveComparativeUI(lastComparisonShape);
+      alert('Η τρέχουσα κατάσταση αποθηκεύτηκε ως σημείο αναφοράς.');
+    }}
+
+    function clearLiveComparativeBaseline() {{
+      localStorage.removeItem(LS_LIVE_BASELINE);
+      liveDemoPrevious = null;
+      liveCompareSource = null;
+      refreshLiveComparativeUI(lastComparisonShape);
+    }}
+
+    function buildLiveDemoPrevious(current) {{
+      const p = deepCloneShape(current);
+      p.ημερομηνία = 'demo-προηγούμενο';
+      p.ώρα = '';
+      p.συνολικά.σε_λειτουργία = Math.max(0, current.συνολικά.σε_λειτουργία - 7);
+      const t = current.συνολικά.ολα_τα_οχηματα || (current.συνολικά.σε_λειτουργία + current.συνολικά.με_βλαβη);
+      p.συνολικά.με_βλαβη = t - p.συνολικά.σε_λειτουργία;
+      p.κατηγορίες.forEach((c, i) => {{
+        const drop = i % 4 === 0 ? 1 : 0;
+        c.σε_λειτουργία = Math.max(0, c.σε_λειτουργία - drop);
+        c.με_βλαβη = c.συνολο - c.σε_λειτουργία;
+      }});
+      const wk = {{ ...p.συνεργεία }};
+      Object.keys(wk).forEach((k) => {{
+        const adj = k === 'ΣΥΝΕΡΓΕΙΟ' ? -2 : (k === 'ΑΠΟΣΥΡΣΗ' ? 2 : 0);
+        if (adj) wk[k] = Math.max(0, (wk[k] || 0) + adj);
+      }});
+      p.συνεργεία = wk;
+      return p;
+    }}
+
+    function loadLiveDemoComparison() {{
+      if (!lastComparisonShape) return;
+      liveDemoPrevious = buildLiveDemoPrevious(lastComparisonShape);
+      liveCompareSource = 'demo';
+      refreshLiveComparativeUI(lastComparisonShape);
+      document.querySelectorAll('.tab').forEach((item) => item.classList.remove('active'));
+      document.querySelectorAll('.tab-panel').forEach((panel) => panel.classList.remove('active'));
+      const btn = document.querySelector('.tab[data-tab="comparative"]');
+      if (btn) btn.classList.add('active');
+      const panel = document.getElementById('comparative');
+      if (panel) panel.classList.add('active');
+      setTimeout(resizeLiveComparativeCharts, 80);
+    }}
+
+    function resizeLiveComparativeCharts() {{
+      ['compareAvailabilityChart', 'compareTotalsChart', 'compareWorkshopChart'].forEach((id) => {{
+        const el = document.getElementById(id);
+        if (el) {{
+          try {{ Plotly.Plots.resize(el); }} catch (e) {{}}
+        }}
+      }});
+    }}
+
+    function refreshLiveComparativeUI(current) {{
+      if (!current || !validateComparisonShape(current)) return;
+      const baseline = loadLiveBaselineFromStorage();
+      const prev = liveDemoPrevious || baseline;
+      const meta = document.getElementById('compareMeta');
+      const noBase = document.getElementById('compareNoBaseline');
+      const content = document.getElementById('compareContent');
+      if (!prev) {{
+        noBase.style.display = 'block';
+        content.style.display = 'none';
+        if (meta) {{
+          meta.textContent = 'Δεν υπάρχει σημείο αναφοράς. Αποθηκεύστε την τρέχουσα κατάσταση ή χρησιμοποιήστε την επίδειξη demo.';
+        }}
+        return;
+      }}
+      noBase.style.display = 'none';
+      content.style.display = 'block';
+      let sourceLabel = '';
+      if (liveCompareSource === 'demo') sourceLabel = ' (επίδειξη: τεχνητό προηγούμενο)';
+      else if (liveCompareSource === 'baseline' || baseline) sourceLabel = ' (σύγκριση με αποθηκευμένο σημείο αναφοράς)';
+      if (meta) {{
+        meta.innerHTML = `<strong>Προηγούμενο:</strong> ${{escapeHtml(prev.ημερομηνία || '—')}} — <strong>Τρέχον:</strong> ${{escapeHtml(current.ημερομηνία || '—')}}${{sourceLabel}}`;
+      }}
+      const dPrev = fleetAvailabilityPercent(prev);
+      const dCurr = fleetAvailabilityPercent(current);
+      const dDelta = dCurr - dPrev;
+      const opsPrev = prev.συνολικά.σε_λειτουργία;
+      const opsCurr = current.συνολικά.σε_λειτουργία;
+      const opsDelta = opsCurr - opsPrev;
+      document.getElementById('cmpPrevAvail').textContent = `${{dPrev.toFixed(1)}}%`;
+      document.getElementById('cmpCurrAvail').textContent = `${{dCurr.toFixed(1)}}%`;
+      document.getElementById('cmpDeltaAvail').innerHTML = formatCompareDelta(dDelta, ' π.μ.');
+      document.getElementById('cmpDeltaOps').innerHTML = formatCompareDelta(opsDelta, '');
+      const exec = document.getElementById('compareExecutive');
+      let msg = '';
+      if (dDelta > 0.5) {{
+        msg = '<strong>Συμπέρασμα:</strong> Η συνολική διαθεσιμότητα (όλα τα οχήματα) βελτιώθηκε κατά ' + dDelta.toFixed(1) + ' π.μ. ';
+        if (opsDelta > 0) msg += 'Τα οχήματα σε λειτουργία αυξήθηκαν κατά ' + opsDelta + '. ';
+        else if (opsDelta < 0) msg += 'Τα οχήματα σε λειτουργία μειώθηκαν κατά ' + Math.abs(opsDelta) + '. ';
+        else msg += 'Ο αριθμός σε λειτουργία παρέμεινε σταθερός. ';
+        msg += 'Ερμηνεύστε παράλληλα μεταβολές μεγέθους στόλου ή αλλαγές καταμέτρησης.';
+      }} else if (dDelta < -0.5) {{
+        msg = '<strong>Συμπέρασμα:</strong> Η διαθεσιμότητα μειώθηκε κατά ' + Math.abs(dDelta).toFixed(1) + ' π.μ. Δείτε τον πίνακα ανά κατηγορία και συνεργείο για εντοπισμό πίεσης.';
+      }} else {{
+        msg = '<strong>Συμπέρασμα:</strong> Ουσιαστικά σταθερή συνολική διαθεσιμότητα (' + dDelta.toFixed(1) + ' π.μ.). Αξιολογήστε κατηγορίες με μεγάλη τοπική μεταβολή.';
+      }}
+      exec.innerHTML = msg;
+      exec.className = 'alert ' + (dDelta > 0.5 ? 'success' : (dDelta < -0.5 ? 'error' : 'warning'));
+      document.getElementById('cmpDeltaCard').style.borderColor = dDelta > 0.5 ? 'rgba(15,157,88,0.4)' : (dDelta < -0.5 ? 'rgba(217,48,37,0.35)' : 'var(--line)');
+
+      const names = [...new Set([...current.κατηγορίες.map((c) => c.κατηγορία), ...prev.κατηγορίες.map((c) => c.κατηγορία)])];
+      const mapP = categoryMapByName(prev);
+      const mapC = categoryMapByName(current);
+      Plotly.react('compareAvailabilityChart', [
+        {{
+          x: names,
+          y: names.map((n) => {{ const c = mapP[n]; return c ? catAvailability(c) : null; }}),
+          name: 'Προηγ.',
+          type: 'bar',
+          marker: {{ color: '#94a3b8' }},
+        }},
+        {{
+          x: names,
+          y: names.map((n) => {{ const c = mapC[n]; return c ? catAvailability(c) : null; }}),
+          name: 'Τρέχον',
+          type: 'bar',
+          marker: {{ color: '#0f9d58' }},
+        }},
+      ], {{
+        barmode: 'group',
+        xaxis: {{ title: 'Κατηγορία', tickangle: -50 }},
+        yaxis: {{ title: '% διαθεσιμότητας', range: [0, 105] }},
+        height: Math.max(400, names.length * 26),
+        legend: {{ orientation: 'h', y: 1.12 }},
+        margin: {{ b: 160, t: 40, l: 50, r: 20 }},
+      }}, {{ responsive: true }});
+
+      const totPrev = prev.συνολικά;
+      const totCurr = current.συνολικά;
+      Plotly.react('compareTotalsChart', [
+        {{
+          x: ['Σε λειτουργία', 'Με βλάβη'],
+          y: [totPrev.σε_λειτουργία, totPrev.με_βλαβη],
+          name: 'Προηγ.',
+          type: 'bar',
+          marker: {{ color: ['#1a73e8', '#f87171'] }},
+        }},
+        {{
+          x: ['Σε λειτουργία', 'Με βλάβη'],
+          y: [totCurr.σε_λειτουργία, totCurr.με_βλαβη],
+          name: 'Τρέχον',
+          type: 'bar',
+          marker: {{ color: ['#0f9d58', '#d93025'] }},
+        }},
+      ], {{
+        barmode: 'group',
+        yaxis: {{ title: 'Αριθμός οχημάτων' }},
+        height: 340,
+        legend: {{ orientation: 'h', y: 1.1 }},
+        margin: {{ t: 40, b: 40, l: 50, r: 20 }},
+      }}, {{ responsive: true }});
+
+      const tbody = document.getElementById('compareCategoryBody');
+      tbody.innerHTML = '';
+      names.forEach((n) => {{
+        const a = mapP[n];
+        const b = mapC[n];
+        const ap = a ? catAvailability(a) : null;
+        const bp = b ? catAvailability(b) : null;
+        const dpp = (ap !== null && bp !== null) ? (bp - ap) : null;
+        const ao = a ? a.σε_λειτουργία : '—';
+        const bo = b ? b.σε_λειτουργία : '—';
+        const ab = a ? a.με_βλαβη : '—';
+        const bb = b ? b.με_βλαβη : '—';
+        let trend = '—';
+        let trendClass = 'badge warn';
+        if (dpp !== null) {{
+          if (dpp > 1) {{ trend = 'Βελτίωση'; trendClass = 'badge good'; }}
+          else if (dpp < -1) {{ trend = 'Επιδείνωση'; trendClass = 'badge bad'; }}
+          else {{ trend = 'Σταθερότητα'; trendClass = 'badge warn'; }}
+        }}
+        const tr = document.createElement('tr');
+        tr.innerHTML = '<td>' + escapeHtml(n) + '</td>' +
+          '<td>' + (ap !== null ? ap.toFixed(1) + '%' : '—') + '</td>' +
+          '<td>' + (bp !== null ? bp.toFixed(1) + '%' : '—') + '</td>' +
+          '<td>' + (dpp !== null ? formatCompareDelta(dpp, ' π.μ.') : '—') + '</td>' +
+          '<td>' + ao + '</td><td>' + bo + '</td>' +
+          '<td>' + ab + '</td><td>' + bb + '</td>' +
+          '<td><span class="' + trendClass + '">' + trend + '</span></td>';
+        tbody.appendChild(tr);
+      }});
+
+      const wPrev = prev.συνεργεία || {{}};
+      const wCurr = current.συνεργεία || {{}};
+      const wKeys = [...new Set([...Object.keys(wPrev), ...Object.keys(wCurr)])];
+      if (wKeys.length) {{
+        Plotly.react('compareWorkshopChart', [
+          {{
+            x: wKeys,
+            y: wKeys.map((k) => wPrev[k] || 0),
+            name: 'Προηγ.',
+            type: 'bar',
+            marker: {{ color: '#54657a' }},
+          }},
+          {{
+            x: wKeys,
+            y: wKeys.map((k) => wCurr[k] || 0),
+            name: 'Τρέχον',
+            type: 'bar',
+            marker: {{ color: '#1e3c72' }},
+          }},
+        ], {{
+          barmode: 'group',
+          xaxis: {{ tickangle: -35 }},
+          yaxis: {{ title: 'Πλήθος' }},
+          height: 380,
+          margin: {{ b: 140, t: 30, l: 50, r: 20 }},
+          legend: {{ orientation: 'h', y: 1.1 }},
+        }}, {{ responsive: true }});
+      }} else {{
+        document.getElementById('compareWorkshopChart').innerHTML = '<div class="empty">Δεν υπάρχουν δεδομένα συνεργείων.</div>';
+      }}
+    }}
 
     document.querySelectorAll('.tab').forEach((button) => {{
       button.addEventListener('click', () => {{
@@ -717,6 +1119,9 @@ def build_dashboard_html() -> str:
         document.querySelectorAll('.tab-panel').forEach((panel) => panel.classList.remove('active'));
         button.classList.add('active');
         document.getElementById(button.dataset.tab).classList.add('active');
+        if (button.dataset.tab === 'comparative') {{
+          setTimeout(resizeLiveComparativeCharts, 60);
+        }}
       }});
     }});
 
@@ -975,6 +1380,11 @@ def build_dashboard_html() -> str:
       renderWorkshops(data);
       renderDetails(data);
       document.getElementById('globalMessage').innerHTML = '';
+      lastComparisonShape = apiPayloadToComparisonShape(data);
+      if (loadLiveBaselineFromStorage() && !liveDemoPrevious) {{
+        liveCompareSource = liveCompareSource || 'baseline';
+      }}
+      refreshLiveComparativeUI(lastComparisonShape);
     }}
 
     function renderError(errorPayload) {{
