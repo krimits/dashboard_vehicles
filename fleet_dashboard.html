@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Dashboard Κατάστασης Στόλου Οχημάτων - 17/03/2026</title>
     <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
     <style>
         * {
             margin: 0;
@@ -459,18 +460,20 @@
         <!-- TAB: ΣΥΓΚΡΙΤΙΚΑ ΣΤΑΤΙΣΤΙΚΑ -->
         <div id="comparative" class="tab-content">
             <div class="compare-toolbar">
-                <label class="file-btn" for="fleetJsonImport">📥 Φόρτωση νέων δεδομένων (JSON)</label>
-                <input type="file" id="fleetJsonImport" accept=".json,application/json" />
+                <label class="file-btn" for="fleetExcelImport">📥 Φόρτωση νέων δεδομένων (Excel)</label>
+                <input type="file" id="fleetExcelImport" accept=".xlsx,.xlsm,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel" />
                 <button type="button" class="btn-secondary" onclick="setCurrentAsBaseline()">📌 Ορισμός τρέχουσας κατάστασης ως σημείο αναφοράς</button>
                 <button type="button" class="btn-secondary" onclick="clearBaseline()">🗑️ Διαγραφή σημείου αναφοράς</button>
                 <button type="button" class="btn-secondary" onclick="exportFleetJson()">💾 Εξαγωγή τρέχοντος JSON</button>
                 <button type="button" class="btn-secondary" onclick="loadDemoComparison()">📊 Επίδειξη σύγκρισης (demo)</button>
             </div>
             <p class="compare-meta" id="compareMeta"></p>
+            <div id="excelParseWarnings" class="alert-box" style="display: none;"></div>
             
             <div id="compareNoBaseline" class="alert-box" style="display: none;">
-                <strong>Πώς λειτουργεί η σύγκριση:</strong> Αποθηκεύστε το τρέχον στιγμιότυπο ως <em>σημείο αναφοράς</em> (π.χ. πριν την επόμενη ενημέρωση από το συνεργείο). 
-                Στη συνέχεια φορτώστε το νέο JSON από το εργαλείο παραγωγής του dashboard. Θα εμφανιστούν αυτόματα συγκριτικά μεγέθη για τη διαθεσιμότητα (γενικά και ανά κατηγορία), ώστε η διοίκηση να αξιολογεί την πρόοδο των επισκευών με βάση στοιχεία, όχι εντυπώσεις.
+                <strong>Πώς λειτουργεί η σύγκριση:</strong> Αποθηκεύστε την τρέχουσα κατάσταση ως <em>σημείο αναφοράς</em> (π.χ. πριν την επόμενη ενημέρωση). 
+                Στη συνέχεια φορτώστε το νεότερο αρχείο <strong>Δελτίου Ενημέρωσης (.xlsx / .xls)</strong> — τα στοιχεία εξάγονται απευθείας από τα φύλλα του Excel (ίδια λογική με το εργαλείο Python του dashboard). 
+                Θα εμφανιστούν συγκριτικά μεγέθη διαθεσιμότητας (γενικά και ανά κατηγορία) για ασφαλή συμπεράσματα της διοίκησης σχετικά με την πρόοδο επισκευών.
             </div>
             
             <div id="compareContent" style="display: none;">
@@ -592,6 +595,362 @@
         let fleetDataΠροηγούμενο = null;
         let fleetCompareSource = null;
         
+        const EXCEL_HEADER_MARKERS = new Set(['ΚΑΤΗΓΟΡΙΑ ΟΧΗΜ.', 'ΚΑΤΗΓΟΡΙΑ ΟΧΗΜ']);
+        const EXCEL_SYNOLO_MARKER = 'ΣΥΝΟΛΑ';
+        const NOTE_ENERGO = 'ΕΝΕΡΓΟ';
+        const MANAGEMENT_CATEGORY_ALIASES = {
+            'ΜΙΚΡΑ 2Τ (ΗΛΕΚΤΡΙΚΑ)': 'ΗΛΕΚΤΡΙΚΑ ΜΙΚΡΑ',
+            'ΜΙΚΡΑ 4Τ (ΜΥΛΟΙ)': 'ΜΙΚΡΑ 4Τ (ΜΥΛΟΙ) (IVECO)',
+            'ΝΕΑ ΜΙΚΡΑ 2Τ (ΠΡΕΣΣΑΚΙΑ)': 'ΝΕΑ ΜΙΚΡΑ 2Τ (ΠΡΕΣΣΑΚΙΑ)',
+            'ΠΑΛΙΑ 5Τ (ΜΥΛΟΙ)': 'ΠΑΛΙΑ ΜΥΛΟΙ 5Τ',
+            'ΝΕΑ 5Τ (ΜΥΛΟΙ)': 'ΝΕΑ ΜΥΛΟΙ 5Τ (ΜΑΝ)',
+            'ΠΡΕΣΕΣ 12Τ': 'ΠΡΕΣΕΣ 12Τ ΝΕΕΣ'
+        };
+        const INFERRED_EXCLUSION_NOTES = new Set([
+            'ΑΠΟΣΥΡΣΗ', 'ΑΣΥΜΦΟΡΟ ΕΠΙΣΚΕΥΗΣ', 'ΠΡΟΣ ΑΠΟΣΥΡΣΗ', 'ΠΑΡΑΧΩΡΗΣΗ',
+            'ΑΝΑΜΟΝΗ ΕΞ. ΣΥΝΕΡΓΕΙΟ', 'ΑΝΑΜΟΝΗ ΕΠΙΣΚΕΥΗΣ', 'ΣΥΝΕΡΓΕΙΟ', 'ΕΞΩΤΕΡΙΚΟ ΣΥΝΕΡΓΕΙΟ'
+        ]);
+        
+        function excelCleanText(value) {
+            if (value === null || value === undefined) return null;
+            if (typeof value === 'number' && Number.isNaN(value)) return null;
+            let text = String(value).replace(/\xa0/g, ' ');
+            text = text.replace(/\s+/g, ' ').trim();
+            return text || null;
+        }
+        
+        function excelParseNumber(value, defaultVal) {
+            if (value === null || value === undefined || value === '') return defaultVal !== undefined ? defaultVal : 0;
+            if (typeof value === 'boolean') return value ? 1 : 0;
+            if (typeof value === 'number' && !Number.isNaN(value)) return Math.trunc(value);
+            const text = excelCleanText(value);
+            if (!text || text === '-') return defaultVal !== undefined ? defaultVal : 0;
+            const n = parseInt(String(text).replace(',', '.'), 10);
+            if (Number.isNaN(n)) return defaultVal !== undefined ? defaultVal : 0;
+            return n;
+        }
+        
+        function excelFormatDate(value) {
+            if (value === null || value === undefined) return null;
+            if (value instanceof Date && !Number.isNaN(value.getTime())) {
+                const y = value.getFullYear();
+                const m = String(value.getMonth() + 1).padStart(2, '0');
+                const d = String(value.getDate()).padStart(2, '0');
+                return y + '-' + m + '-' + d;
+            }
+            const text = excelCleanText(value);
+            if (!text || text === '00:00:00') return null;
+            return text;
+        }
+        
+        function excelSafePercent(part, whole) {
+            if (whole <= 0) return 0;
+            return Math.round((part / whole) * 1000) / 10;
+        }
+        
+        function excelCell(row, colIndex) {
+            if (!row || colIndex < 0) return null;
+            return row[colIndex] !== undefined && row[colIndex] !== '' ? row[colIndex] : null;
+        }
+        
+        function excelSheetToRows(workbook, sheetIndex) {
+            const name = workbook.SheetNames[sheetIndex];
+            if (!name) throw new Error('Λείπει το φύλλο ' + (sheetIndex + 1) + ' (αναμενόμενη ίδια διάταξη με το πρότυπο Δελτίου).');
+            const sheet = workbook.Sheets[name];
+            return XLSX.utils.sheet_to_json(sheet, { header: 1, defval: null, raw: true });
+        }
+        
+        function excelNormalizeCategory(rawName, occurrence) {
+            let name = excelCleanText(rawName) || '';
+            name = MANAGEMENT_CATEGORY_ALIASES[name] || name;
+            if (name === 'ΤΡΑΚΤΟΡΕΣ') {
+                return occurrence === 1 ? 'ΤΡΑΚΤΟΡΕΣ ΠΑΛΙΟΙ' : 'ΤΡΑΚΤΟΡΕΣ LEASING';
+            }
+            return name;
+        }
+        
+        function excelParseVehicleRow(categoryName, row) {
+            const availableFlag = excelParseNumber(excelCell(row, 2), 0) === 1;
+            const brokenFlag = excelParseNumber(excelCell(row, 3), 0) === 1;
+            let note = excelCleanText(excelCell(row, 7)) || 'ΑΓΝΩΣΤΟ';
+            const status = availableFlag ? 'Σε λειτουργία' : (brokenFlag ? 'Με βλάβη' : 'Άγνωστο');
+            return {
+                row_index: excelParseNumber(excelCell(row, 0), 0),
+                category_name: categoryName,
+                vehicle_id: String(excelParseNumber(excelCell(row, 1), 0)),
+                available_flag: availableFlag,
+                broken_flag: brokenFlag,
+                status: status,
+                breakdown_date: excelFormatDate(excelCell(row, 4)),
+                expected_return_date: excelFormatDate(excelCell(row, 5)),
+                issue_description: excelCleanText(excelCell(row, 6)),
+                note: note,
+                excluded: false,
+                exclusion_reason: null
+            };
+        }
+        
+        function excelVehicleSortKeyReconcile(v) {
+            const noteP = INFERRED_EXCLUSION_NOTES.has(v.note) ? 0 : 1;
+            const availP = !v.available_flag ? 0 : 1;
+            const bd = v.breakdown_date || '9999-12-31';
+            return [noteP, availP, bd, v.vehicle_id];
+        }
+        
+        function excelCmpReconcile(a, b) {
+            const ka = excelVehicleSortKeyReconcile(a);
+            const kb = excelVehicleSortKeyReconcile(b);
+            for (let i = 0; i < 4; i++) {
+                if (ka[i] < kb[i]) return -1;
+                if (ka[i] > kb[i]) return 1;
+            }
+            return 0;
+        }
+        
+        function excelCmpBuildPayload(a, b) {
+            const ta = [a.excluded ? 1 : 0, a.available_flag ? 0 : 1, a.vehicle_id];
+            const tb = [b.excluded ? 1 : 0, b.available_flag ? 0 : 1, b.vehicle_id];
+            for (let i = 0; i < 3; i++) {
+                if (ta[i] < tb[i]) return -1;
+                if (ta[i] > tb[i]) return 1;
+            }
+            return 0;
+        }
+        
+        function excelParseSummarySheet(rows) {
+            if (rows.length < 28) {
+                throw new Error('Το φύλλο συνολικής απεικόνισης (1ο φύλλο) είναι μικρότερο από το αναμενόμενο.');
+            }
+            const row1 = rows[1] || [];
+            let reportTime = excelCleanText(excelCell(row1, 7)) || null;
+            if (reportTime) reportTime = reportTime.replace(/^ΩΡΑ:\s*/i, '').trim();
+            const categoriesAll = [];
+            const categoriesReal = [];
+            const realMap = {};
+            for (let i = 5; i <= 26; i++) {
+                const row = rows[i] || [];
+                const totalName = excelCleanText(excelCell(row, 1));
+                if (totalName) {
+                    const totalCount = excelParseNumber(excelCell(row, 4), 0);
+                    const ins = excelParseNumber(excelCell(row, 2), 0);
+                    categoriesAll.push({
+                        name: totalName,
+                        in_service: ins,
+                        broken: excelParseNumber(excelCell(row, 3), 0),
+                        total: totalCount,
+                        availability_pct: excelSafePercent(ins, totalCount)
+                    });
+                }
+                const realName = excelCleanText(excelCell(row, 7));
+                if (realName) {
+                    const realTotal = excelParseNumber(excelCell(row, 10), 0);
+                    const rins = excelParseNumber(excelCell(row, 8), 0);
+                    const payload = {
+                        name: realName,
+                        in_service: rins,
+                        broken: excelParseNumber(excelCell(row, 9), 0),
+                        total: realTotal,
+                        availability_pct: excelSafePercent(rins, realTotal)
+                    };
+                    categoriesReal.push(payload);
+                    realMap[realName] = payload;
+                }
+            }
+            if (categoriesAll.length !== 22 || categoriesReal.length !== 22) {
+                throw new Error('Δεν χαρτογραφήθηκαν σωστά οι 22 κατηγορίες στο 1ο φύλλο (σύνολο/πραγματική στήλη).');
+            }
+            return {
+                report_date: excelFormatDate(excelCell(rows[1], 2)),
+                report_time: reportTime,
+                all_vehicles: {
+                    in_service: excelParseNumber(excelCell(rows[6], 13), 0),
+                    broken: excelParseNumber(excelCell(rows[7], 13), 0),
+                    total: excelParseNumber(excelCell(rows[8], 13), 0)
+                },
+                real_fleet: {
+                    in_service: excelParseNumber(excelCell(rows[12], 13), 0),
+                    broken: excelParseNumber(excelCell(rows[13], 13), 0),
+                    total: excelParseNumber(excelCell(rows[14], 13), 0)
+                },
+                collection_vehicles_total: excelParseNumber(excelCell(rows[27], 13), 0),
+                categories_all: categoriesAll,
+                categories_real: categoriesReal,
+                categories_real_map: realMap
+            };
+        }
+        
+        function excelParseManagementSections(rows) {
+            const categories = {};
+            const occurrenceCounter = {};
+            let currentCategory = null;
+            for (const row of rows) {
+                const marker = excelCleanText(row && row[0]);
+                if (marker && EXCEL_HEADER_MARKERS.has(marker)) {
+                    const rawName = excelCleanText(excelCell(row, 3));
+                    if (!rawName) continue;
+                    occurrenceCounter[rawName] = (occurrenceCounter[rawName] || 0) + 1;
+                    currentCategory = excelNormalizeCategory(rawName, occurrenceCounter[rawName]);
+                    continue;
+                }
+                if (!currentCategory) continue;
+                if (marker === EXCEL_SYNOLO_MARKER) {
+                    currentCategory = null;
+                    continue;
+                }
+                const c0 = excelCell(row, 0);
+                const idNum = excelParseNumber(excelCell(row, 1), 0);
+                if ((typeof c0 === 'number') && idNum > 0) {
+                    if (!categories[currentCategory]) categories[currentCategory] = [];
+                    categories[currentCategory].push(excelParseVehicleRow(currentCategory, row));
+                }
+            }
+            if (!Object.keys(categories).length) {
+                throw new Error('Δεν εντοπίστηκαν τμήματα οχημάτων στο 3ο φύλλο (διαχείριση).');
+            }
+            return categories;
+        }
+        
+        function excelParseExplicitExclusions(rows) {
+            const exclusions = {};
+            for (const row of rows) {
+                const c0 = excelCell(row, 0);
+                if (typeof c0 === 'number') {
+                    const vid = String(excelParseNumber(excelCell(row, 1), 0));
+                    exclusions[vid] = excelCleanText(excelCell(row, 7)) || 'Αφαίρεση από την πραγματική απεικόνιση';
+                }
+            }
+            return exclusions;
+        }
+        
+        function excelReconcileVehicleExclusions(vehicleMap, realSummaryMap, explicitExclusions) {
+            const warnings = [];
+            for (const vehicles of Object.values(vehicleMap)) {
+                for (const v of vehicles) {
+                    const reason = explicitExclusions[v.vehicle_id];
+                    if (reason) {
+                        v.excluded = true;
+                        v.exclusion_reason = reason;
+                    }
+                }
+            }
+            for (const [categoryName, vehicles] of Object.entries(vehicleMap)) {
+                const summary = realSummaryMap[categoryName];
+                if (!summary) {
+                    warnings.push("Η κατηγορία '" + categoryName + "' υπάρχει στο φύλλο οχημάτων αλλά όχι στο σύνοψη.");
+                    continue;
+                }
+                const includedNow = vehicles.filter(v => !v.excluded);
+                const diff = includedNow.length - summary.total;
+                if (diff === 0) continue;
+                if (diff < 0) {
+                    warnings.push("Η κατηγορία '" + categoryName + "' έχει λιγότερα οχήματα στο φύλλο (" + includedNow.length + ") από το σύνοψη (" + summary.total + ").");
+                    continue;
+                }
+                const sorted = includedNow.slice().sort(excelCmpReconcile);
+                for (let i = 0; i < diff; i++) {
+                    sorted[i].excluded = true;
+                    sorted[i].exclusion_reason = 'Συμπληρωματική αφαίρεση από τη συνοπτική πραγματική απεικόνιση';
+                }
+            }
+            return warnings;
+        }
+        
+        function excelBuildCategoryPayload(summaryData, vehicleMap) {
+            const allMap = {};
+            summaryData.categories_all.forEach(item => { allMap[item.name] = item; });
+            const items = [];
+            summaryData.categories_real.forEach((summaryItem, idx) => {
+                const name = summaryItem.name;
+                const vehicles = (vehicleMap[name] || []).map(v => Object.assign({}, v));
+                vehicles.sort(excelCmpBuildPayload);
+                const included = vehicles.filter(v => !v.excluded);
+                const workshopCounts = {};
+                included.forEach(v => {
+                    if (v.note && v.note !== NOTE_ENERGO) {
+                        workshopCounts[v.note] = (workshopCounts[v.note] || 0) + 1;
+                    }
+                });
+                items.push({
+                    order: idx + 1,
+                    name: name,
+                    summary: summaryItem,
+                    vehicles: vehicles,
+                    workshop_counts: workshopCounts
+                });
+            });
+            return items;
+        }
+        
+        function excelBuildWorkshopSummary(categories) {
+            const counter = {};
+            for (const cat of categories) {
+                for (const v of cat.vehicles) {
+                    if (v.note && v.note !== NOTE_ENERGO) {
+                        counter[v.note] = (counter[v.note] || 0) + 1;
+                    }
+                }
+            }
+            return Object.entries(counter)
+                .sort((a, b) => b[1] - a[1])
+                .map(([name, count]) => ({ name: name, count: count }));
+        }
+        
+        function excelPayloadToFleetData(summaryData, categories, workshops, sourceFileName, warnings) {
+            const all = summaryData.all_vehicles;
+            const συνεργεία = {};
+            workshops.forEach(w => { συνεργεία[w.name] = w.count; });
+            const κατηγορίες = summaryData.categories_real.map(sr => ({
+                κατηγορία: sr.name,
+                σε_λειτουργία: sr.in_service,
+                με_βλαβη: sr.broken,
+                συνολο: sr.total
+            }));
+            return {
+                ημερομηνία: summaryData.report_date,
+                ώρα: summaryData.report_time,
+                κατηγορίες: κατηγορίες,
+                συνεργεία: συνεργεία,
+                συνολικά: {
+                    ολα_τα_οχηματα: all.total,
+                    σε_λειτουργία: all.in_service,
+                    με_βλαβη: all.broken,
+                    πραγματικος_στολος: summaryData.real_fleet.total,
+                    οχηματα_αποκομιδης: summaryData.collection_vehicles_total
+                },
+                _meta: { sourceFile: sourceFileName || '', warnings: warnings || [] }
+            };
+        }
+        
+        function excelWorkbookToFleetData(workbook, sourceFileName) {
+            if (typeof XLSX === 'undefined') {
+                throw new Error('Η βιβλιοθήκη SheetJS (XLSX) δεν φορτώθηκε. Ελέγξτε τη σύνδεση στο διαδίκτυο.');
+            }
+            const rows0 = excelSheetToRows(workbook, 0);
+            const rows2 = excelSheetToRows(workbook, 2);
+            const rows3 = excelSheetToRows(workbook, 3);
+            const summaryData = excelParseSummarySheet(rows0);
+            const vehicleMap = excelParseManagementSections(rows2);
+            const explicit = excelParseExplicitExclusions(rows3);
+            const warnings = excelReconcileVehicleExclusions(vehicleMap, summaryData.categories_real_map, explicit);
+            const categories = excelBuildCategoryPayload(summaryData, vehicleMap);
+            const workshops = excelBuildWorkshopSummary(categories);
+            return excelPayloadToFleetData(summaryData, categories, workshops, sourceFileName, warnings);
+        }
+        
+        function showExcelParseWarnings(warnings) {
+            const el = document.getElementById('excelParseWarnings');
+            if (!el) return;
+            if (warnings && warnings.length) {
+                el.style.display = 'block';
+                el.className = 'alert-box';
+                el.innerHTML = '<strong>Προειδοποιήσεις ανάγνωσης Excel:</strong><ul style="margin:8px 0 0 18px;">' +
+                    warnings.map(w => '<li>' + w + '</li>').join('') + '</ul>';
+            } else {
+                el.style.display = 'none';
+                el.innerHTML = '';
+            }
+        }
+        
         function deepClone(o) {
             return JSON.parse(JSON.stringify(o));
         }
@@ -685,7 +1044,9 @@
         function exportFleetJson() {
             try {
                 validateFleetPayload(fleetData);
-                const blob = new Blob([JSON.stringify(fleetData, null, 2)], { type: 'application/json;charset=utf-8' });
+                const forExport = deepClone(fleetData);
+                delete forExport._meta;
+                const blob = new Blob([JSON.stringify(forExport, null, 2)], { type: 'application/json;charset=utf-8' });
                 const a = document.createElement('a');
                 a.href = URL.createObjectURL(blob);
                 a.download = 'fleet-data-' + (fleetData.ημερομηνία || 'export').replace(/[^0-9-]/g, '') + '.json';
@@ -703,14 +1064,17 @@
             showTab('comparative', document.querySelector('.tab[data-tab="comparative"]'));
         }
         
-        function onFleetJsonImport(ev) {
+        function onFleetExcelImport(ev) {
             const file = ev.target.files && ev.target.files[0];
             if (!file) return;
             const reader = new FileReader();
-            reader.onload = function () {
+            reader.onload = function (e) {
                 try {
-                    const incoming = JSON.parse(reader.result);
+                    const buf = new Uint8Array(e.target.result);
+                    const workbook = XLSX.read(buf, { type: 'array', cellDates: true });
+                    const incoming = excelWorkbookToFleetData(workbook, file.name);
                     validateFleetPayload(incoming);
+                    showExcelParseWarnings(incoming._meta && incoming._meta.warnings);
                     const baseline = loadBaselineFromStorage();
                     if (baseline) {
                         fleetDataΠροηγούμενο = deepClone(baseline);
@@ -720,16 +1084,18 @@
                         fleetCompareSource = 'screen';
                     }
                     fleetData = incoming;
+                    const src = (incoming._meta && incoming._meta.sourceFile) ? ' | 📎 ' + incoming._meta.sourceFile : '';
                     document.querySelector('.header .datetime').textContent =
-                        '📅 Ημερομηνία: ' + (fleetData.ημερομηνία || '—') + ' | ⏰ Ώρα: ' + (fleetData.ώρα || '—');
+                        '📅 Ημερομηνία: ' + (fleetData.ημερομηνία || '—') + ' | ⏰ Ώρα: ' + (fleetData.ώρα || '—') + src;
                     rerenderAllDashboard();
                     refreshComparativeUI();
-                } catch (e) {
-                    alert('Αποτυχία φόρτωσης JSON: ' + e.message);
+                } catch (err) {
+                    showExcelParseWarnings([]);
+                    alert('Αποτυχία φόρτωσης Excel: ' + err.message);
                 }
                 ev.target.value = '';
             };
-            reader.readAsText(file, 'UTF-8');
+            reader.readAsArrayBuffer(file);
         }
         
         function rerenderAllDashboard() {
@@ -1153,7 +1519,7 @@
             if (loadBaselineFromStorage() && !fleetDataΠροηγούμενο) {
                 fleetCompareSource = 'baseline';
             }
-            document.getElementById('fleetJsonImport').addEventListener('change', onFleetJsonImport);
+            document.getElementById('fleetExcelImport').addEventListener('change', onFleetExcelImport);
             renderCharts();
             filterCategories('all', document.querySelector('.filter-btn[onclick*="\'all\'"]'));
             refreshComparativeUI();
