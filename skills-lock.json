@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "skills": {
+    "bencium-impact-designer": {
+      "source": "bencium/bencium-claude-code-design-skill",
+      "sourceType": "github",
+      "computedHash": "7dcc22fcd80743f57faed3984a9ca7617868e8b1adda3fafdcd7894471d8914a"
+    }
+  }
+}
