@@ -260,18 +260,11 @@ def try_parse_positive_int(value: Any) -> int | None:
 def parse_collection_daily_availability(rows: list[list[Any]]) -> list[dict[str, Any]]:
     """
     Εξάγει τον πίνακα «ΟΧΗΜΑΤΑ ΑΠΟΚΟΜΙΔΗΣ (ΗΜΕΡΗΣΙΑ ΔΙΑΘΕΣΙΜΟΤΗΤΑ)» από τις γραμμές του φύλλου συνόψεως.
-    Σταματά πριν τη γραμμή ΣΥΝΟΛΟ. Αν δεν βρεθεί κεφαλίδα, επιστρέφει κενή λίστα.
-
-    Η αναζήτηση κεφαλίδας ξεκινά από γραμμή >= 28 (μετά το σύνολο collection στη γραμμή 27)
-    ώστε να μην συγχέεται με τον τίτλο του φύλλου ή τον πίνακα των 22 κατηγοριών πραγματικής απεικόνισης.
+    Σταματά πριν τη γραμμή ΣΥΝΟΛΟ. Αν δεν βρεθεί έγκυρος πίνακας, επιστρέφει κενή λίστα.
     """
     out: list[dict[str, Any]] = []
     start: int | None = None
-    # 0-based: γραμμές 0–27 = κύριο summary + συνολικό πλήθος αποκομιδής· ο πίνακας ανά κατηγορία είναι από κάτω.
-    header_scan_min = 28
     for i, row in enumerate(rows):
-        if i < header_scan_min:
-            continue
         blob = " ".join(t.upper() for t in (clean_text(c) or "" for c in row) if t)
         if "\u039f\u03a7\u0397\u039c\u0391\u03a4\u0391 \u0391\u03a0\u039f\u039a\u039f\u039c\u0399\u0394\u0397\u03a3" in blob and (
             "\u0397\u039c\u0395\u03a1\u0397\u03a3\u0399\u0391" in blob or "\u0394\u0399\u0391\u0398\u0395\u03a3\u0399\u039c\u039f\u03a4\u0397\u03a4\u0391" in blob
@@ -280,6 +273,7 @@ def parse_collection_daily_availability(rows: list[list[Any]]) -> list[dict[str,
             break
     if start is None:
         return []
+    found_total = False
     for j in range(start, len(rows)):
         row = rows[j]
         limit = len(row) if row else 0
@@ -290,6 +284,7 @@ def parse_collection_daily_availability(rows: list[list[Any]]) -> list[dict[str,
                 continue
             if "\u03a3\u03a5\u039d\u039f\u039b\u039f" in t.upper():
                 stop = True
+                found_total = True
                 break
             if not any(ch.isalpha() for ch in t):
                 continue
@@ -302,7 +297,7 @@ def parse_collection_daily_availability(rows: list[list[Any]]) -> list[dict[str,
             break
         if stop:
             break
-    return out
+    return out if found_total and out else []
 
 
 def normalize_management_category(raw_name: str, occurrence: int) -> str:
