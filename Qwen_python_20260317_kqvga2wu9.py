@@ -261,10 +261,17 @@ def parse_collection_daily_availability(rows: list[list[Any]]) -> list[dict[str,
     """
     Εξάγει τον πίνακα «ΟΧΗΜΑΤΑ ΑΠΟΚΟΜΙΔΗΣ (ΗΜΕΡΗΣΙΑ ΔΙΑΘΕΣΙΜΟΤΗΤΑ)» από τις γραμμές του φύλλου συνόψεως.
     Σταματά πριν τη γραμμή ΣΥΝΟΛΟ. Αν δεν βρεθεί κεφαλίδα, επιστρέφει κενή λίστα.
+
+    Η αναζήτηση κεφαλίδας ξεκινά από γραμμή >= 28 (μετά το σύνολο collection στη γραμμή 27)
+    ώστε να μην συγχέεται με τον τίτλο του φύλλου ή τον πίνακα των 22 κατηγοριών πραγματικής απεικόνισης.
     """
     out: list[dict[str, Any]] = []
     start: int | None = None
+    # 0-based: γραμμές 0–27 = κύριο summary + συνολικό πλήθος αποκομιδής· ο πίνακας ανά κατηγορία είναι από κάτω.
+    header_scan_min = 28
     for i, row in enumerate(rows):
+        if i < header_scan_min:
+            continue
         blob = " ".join(t.upper() for t in (clean_text(c) or "" for c in row) if t)
         if "\u039f\u03a7\u0397\u039c\u0391\u03a4\u0391 \u0391\u03a0\u039f\u039a\u039f\u039c\u0399\u0394\u0397\u03a3" in blob and (
             "\u0397\u039c\u0395\u03a1\u0397\u03a3\u0399\u0391" in blob or "\u0394\u0399\u0391\u0398\u0395\u03a3\u0399\u039c\u039f\u03a4\u0397\u03a4\u0391" in blob

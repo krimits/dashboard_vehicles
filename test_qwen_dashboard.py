@@ -49,8 +49,9 @@ class FindLatestExcelFileTests(unittest.TestCase):
 class CollectionDailyAvailabilityParserTests(unittest.TestCase):
     def test_parses_rows_after_header_until_total(self):
         module = load_module()
-        rows = [
-            [None, None],
+        # Η κεφαλίδα πρέπει να βρίσκεται σε γραμμή >= 28 (μετά τον κύριο πίνακα συνόψεως).
+        prefix = [[None, None] for _ in range(28)]
+        rows = prefix + [
             [
                 "ΟΧΗΜΑΤΑ ΑΠΟΚΟΜΙΔΗΣ (ΗΜΕΡΗΣΙΑ ΔΙΑΘΕΣΙΜΟΤΗΤΑ)",
                 None,
@@ -71,6 +72,17 @@ class CollectionDailyAvailabilityParserTests(unittest.TestCase):
     def test_returns_empty_when_header_missing(self):
         module = load_module()
         rows = [["Άλλο κείμενο", 1], ["Κατηγορία", 2]]
+        self.assertEqual(module.parse_collection_daily_availability(rows), [])
+
+    def test_ignores_header_before_row_28(self):
+        module = load_module()
+        rows = [
+            [
+                "ΟΧΗΜΑΤΑ ΑΠΟΚΟΜΙΔΗΣ (ΗΜΕΡΗΣΙΑ ΔΙΑΘΕΣΙΜΟΤΗΤΑ)",
+                None,
+            ],
+            ["ΨΕΥΔΟ-ΔΕΔΟΜΕΝΑ", 99],
+        ]
         self.assertEqual(module.parse_collection_daily_availability(rows), [])
 
 
