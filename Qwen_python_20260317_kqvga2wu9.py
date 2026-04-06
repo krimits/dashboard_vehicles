@@ -1368,6 +1368,9 @@ def build_dashboard_html() -> str:
           x: catNames,
           y: allCats.map((item) => item.summary.in_service),
           marker: {{ color: '#0f9d58' }},
+          text: allCats.map((item) => String(item.summary.in_service)),
+          textposition: 'outside',
+          textfont: {{ size: 11, color: '#1a1a1a' }},
         }},
         {{
           type: 'bar',
@@ -1375,13 +1378,16 @@ def build_dashboard_html() -> str:
           x: catNames,
           y: allCats.map((item) => item.summary.broken),
           marker: {{ color: '#d93025' }},
+          text: allCats.map((item) => String(item.summary.broken)),
+          textposition: 'outside',
+          textfont: {{ size: 11, color: '#1a1a1a' }},
         }},
       ], {{
         barmode: 'group',
         xaxis: {{ tickangle: -45, title: 'Κατηγορία' }},
         yaxis: {{ title: 'Πλήθος οχημάτων' }},
         height: Math.max(440, catNames.length * 24),
-        margin: {{ t: 50, b: 220, l: 50, r: 24 }},
+        margin: {{ t: 64, b: 220, l: 50, r: 24 }},
         legend: {{ orientation: 'h', y: 1.12 }},
       }}, {{ responsive: true }});
 
