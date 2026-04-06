@@ -49,7 +49,7 @@ class FindLatestExcelFileTests(unittest.TestCase):
 class CollectionDailyAvailabilityParserTests(unittest.TestCase):
     def test_parses_rows_after_header_until_total(self):
         module = load_module()
-        # Η κεφαλίδα πρέπει να βρίσκεται σε γραμμή >= 28 (μετά τον κύριο πίνακα συνόψεως).
+        # Παλιά διάταξη: κεφαλίδα μετά τη ζώνη 5–26, δύο στήλες (fallback blob).
         prefix = [[None, None] for _ in range(28)]
         rows = prefix + [
             [
@@ -69,12 +69,36 @@ class CollectionDailyAvailabilityParserTests(unittest.TestCase):
             ],
         )
 
+    def test_parses_table_at_column_l_same_row_band_as_main_22(self):
+        """Τυπικό δελτίο: L17:M28 — κεφαλίδα στη στήλη L ενώ οι γραμμές 5–26 είναι το κύριο summary."""
+        module = load_module()
+        wide = 13
+        rows = [[None] * wide for _ in range(16)]
+        rows.append(
+            [None] * 11
+            + [
+                "ΟΧΗΜΑΤΑ ΑΠΟΚΟΜΙΔΗΣ (ΗΜΕΡΗΣΙΑ ΔΙΑΘΕΣΙΜΟΤΗΤΑ)",
+                None,
+            ]
+        )
+        rows.append([None] * 11 + ["ΜΙΚΡΑ 4Τ (ΜΥΛΟΙ) (IVECO)", 5])
+        rows.append([None] * 11 + ["ΝΕΑ ΜΙΚΡΑ 2Τ (ΠΡΕΣΣΑΚΙΑ)", 3])
+        rows.append([None] * 11 + ["ΣΥΝΟΛΟ (TOTAL)", 65])
+        result = module.parse_collection_daily_availability(rows)
+        self.assertEqual(
+            result,
+            [
+                {"name": "ΜΙΚΡΑ 4Τ (ΜΥΛΟΙ) (IVECO)", "count": 5},
+                {"name": "ΝΕΑ ΜΙΚΡΑ 2Τ (ΠΡΕΣΣΑΚΙΑ)", "count": 3},
+            ],
+        )
+
     def test_returns_empty_when_header_missing(self):
         module = load_module()
         rows = [["Άλλο κείμενο", 1], ["Κατηγορία", 2]]
         self.assertEqual(module.parse_collection_daily_availability(rows), [])
 
-    def test_ignores_header_before_row_28(self):
+    def test_ignores_orphan_header_without_data_rows(self):
         module = load_module()
         rows = [
             [
