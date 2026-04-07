@@ -1413,10 +1413,13 @@ def build_dashboard_html() -> str:
           x: coll.map((item) => item.name),
           y: coll.map((item) => item.count),
           marker: {{ color: '#1a73e8' }},
+          text: coll.map((item) => String(item.count)),
+          textposition: 'outside',
+          textfont: {{ size: 11, color: '#1a1a1a' }},
         }}], {{
           xaxis: {{ tickangle: -35, title: 'Κατηγορία' }},
           yaxis: {{ title: 'Διαθέσιμα οχήματα' }},
-          margin: {{ t: 20, b: 160, l: 50, r: 20 }},
+          margin: {{ t: 56, b: 160, l: 50, r: 20 }},
           height: Math.max(360, coll.length * 36),
         }}, {{ responsive: true }});
       }} else {{
