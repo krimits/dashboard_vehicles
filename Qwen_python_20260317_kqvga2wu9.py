@@ -261,24 +261,42 @@ def parse_collection_daily_availability(rows: list[list[Any]]) -> list[dict[str,
     """
     Εξάγει τον πίνακα «ΟΧΗΜΑΤΑ ΑΠΟΚΟΜΙΔΗΣ (ΗΜΕΡΗΣΙΑ ΔΙΑΘΕΣΙΜΟΤΗΤΑ)» από τις γραμμές του φύλλου συνόψεως.
     Σταματά πριν τη γραμμή ΣΥΝΟΛΟ. Αν δεν βρεθεί έγκυρος πίνακας, επιστρέφει κενή λίστα.
+
+    Σε τυπικό δελτίο ο πίνακας είναι δεξιά (π.χ. στήλη L) ενώ οι ίδιες γραμμές αριστερά φέρουν τις 22 κατηγορίες
+    του summary· γι' αυτό η ανάγνωση περιορίζεται στη στήλη όπου εντοπίστηκε η κεφαλίδα και δεξιά της.
     """
     out: list[dict[str, Any]] = []
     start: int | None = None
+    col_start: int | None = None
+    header_needle = "\u039f\u03a7\u0397\u039c\u0391\u03a4\u0391 \u0391\u03a0\u039f\u039a\u039f\u039c\u0399\u0394\u0397\u03a3"
     for i, row in enumerate(rows):
-        blob = " ".join(t.upper() for t in (clean_text(c) or "" for c in row) if t)
-        if "\u039f\u03a7\u0397\u039c\u0391\u03a4\u0391 \u0391\u03a0\u039f\u039a\u039f\u039c\u0399\u0394\u0397\u03a3" in blob and (
-            "\u0397\u039c\u0395\u03a1\u0397\u03a3\u0399\u0391" in blob or "\u0394\u0399\u0391\u0398\u0395\u03a3\u0399\u039c\u039f\u03a4\u0397\u03a4\u0391" in blob
-        ):
+        if not row:
+            continue
+        limit = len(row)
+        for c in range(limit):
+            cell = clean_text(row[c])
+            if not cell:
+                continue
+            upper = cell.upper()
+            if header_needle not in upper:
+                continue
+            if "\u0397\u039c\u0395\u03a1\u0397\u03a3\u0399\u0391" not in upper and "\u0394\u0399\u0391\u0398\u0395\u03a3\u0399\u039c\u039f\u03a4\u0397\u03a4\u0391" not in upper:
+                continue
+            col_start = c
             start = i + 1
             break
-    if start is None:
+        if col_start is not None:
+            break
+    if start is None or col_start is None:
         return []
     found_total = False
     for j in range(start, len(rows)):
         row = rows[j]
         limit = len(row) if row else 0
+        if col_start >= limit:
+            continue
         stop = False
-        for c in range(limit):
+        for c in range(col_start, limit):
             t = clean_text(row[c]) if c < limit else None
             if not t:
                 continue

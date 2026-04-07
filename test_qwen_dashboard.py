@@ -109,6 +109,34 @@ class CollectionDailyAvailabilityParserTests(unittest.TestCase):
         ]
         self.assertEqual(module.parse_collection_daily_availability(rows), [])
 
+    def test_uses_header_column_band_not_left_summary_columns(self):
+        """Στις ίδιες γραμμές το αριστερό block είναι το summary 22· ο πίνακας αποκομιδής είναι δεξιά."""
+        module = load_module()
+        wide = 14
+        rows = [[None] * wide for _ in range(16)]
+        rows.append(
+            [None] * 11
+            + [
+                "ΟΧΗΜΑΤΑ ΑΠΟΚΟΜΙΔΗΣ (ΗΜΕΡΗΣΙΑ ΔΙΑΘΕΣΙΜΟΤΗΤΑ)",
+                None,
+            ]
+        )
+        rows.append(
+            [None, "ΛΕΩΦΟΡΕΙΑ ΣΧΟΛΙΚΑ", None, None, 12, None, None, None, None, None, None, "ΜΙΚΡΑ 4Τ (ΜΥΛΟΙ) (IVECO)", 6]
+        )
+        rows.append(
+            [None, "ΑΛΛΗ ΚΑΤΗΓΟΡΙΑ", None, None, 5, None, None, None, None, None, None, "ΝΕΑ ΜΙΚΡΑ 2Τ (ΠΡΕΣΣΑΚΙΑ)", 5]
+        )
+        rows.append([None] * 11 + ["ΣΥΝΟΛΟ (TOTAL)", 66])
+        result = module.parse_collection_daily_availability(rows)
+        self.assertEqual(
+            result,
+            [
+                {"name": "ΜΙΚΡΑ 4Τ (ΜΥΛΟΙ) (IVECO)", "count": 6},
+                {"name": "ΝΕΑ ΜΙΚΡΑ 2Τ (ΠΡΕΣΣΑΚΙΑ)", "count": 5},
+            ],
+        )
+
 
 class WorkbookParsingTests(unittest.TestCase):
     @classmethod
