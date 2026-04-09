@@ -138,6 +138,18 @@ class CollectionDailyAvailabilityParserTests(unittest.TestCase):
         )
 
 
+class SummaryKpiTripletTests(unittest.TestCase):
+    def test_infers_total_when_summary_cell_empty_but_ins_brk_present(self):
+        module = load_module()
+        rows = [[None] * 14 for _ in range(20)]
+        rows[12] = [None] * 13 + [59]
+        rows[13] = [None] * 13 + [40]
+        rows[14] = [None] * 13 + [0]
+        cats = [{"total": 1, "in_service": 1, "broken": 0} for _ in range(22)]
+        ins, brk, tot = module._parse_summary_kpi_triplet(rows, 12, 13, 14, 13, cats)
+        self.assertEqual((ins, brk, tot), (59, 40, 99))
+
+
 class WorkbookParsingTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
