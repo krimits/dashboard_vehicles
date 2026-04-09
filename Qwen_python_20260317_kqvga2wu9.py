@@ -175,6 +175,107 @@ def safe_percent(part: int, whole: int) -> float:
     return round((part / whole) * 100, 1)
 
 
+def _try_cell_as_report_date(cell: Any) -> str | None:
+    """Ημερομηνία αναφοράς· αποφεύγει τυχαίους ακέραιους/κείμενα χωρίς μοτίβο ημερομηνίας."""
+    if cell is None or pd.isna(cell):
+        return None
+    if isinstance(cell, datetime):
+        return cell.date().isoformat()
+    if isinstance(cell, date):
+        return cell.isoformat()
+    if isinstance(cell, (int, float, bool)):
+        return None
+    text = clean_text(cell)
+    if not text or text == "00:00:00":
+        return None
+    if re.search(r"\d{4}-\d{2}-\d{2}", text):
+        return text.split()[0] if " " in text else text
+    if re.search(r"\d{1,2}[/.-]\d{1,2}[/.-]\d{2,4}", text):
+        return text
+    return None
+
+
+def extract_report_date_from_summary_rows(rows: list[list[Any]]) -> str | None:
+    """Προτιμά γραμμή 1, στήλες όπως στο κλασικό δελτίο· αλλιώς αναζήτηση σε γειτονικές γραμμές/στήλες."""
+    for ri in (1, 2, 0):
+        if ri >= len(rows) or not rows[ri]:
+            continue
+        row = rows[ri]
+        col_order = (2, 1, 3, 4, 5, 6, 0, 7, 8, 9, 10, 11, 12)
+        if ri != 1:
+            col_order = (2, 1, 3, 4, 5, 6, 7, 0, 8, 9, 10, 11, 12)
+        for idx in col_order:
+            if idx < len(row):
+                got = _try_cell_as_report_date(row[idx])
+                if got:
+                    return got
+    return None
+
+
+def extract_report_time_from_summary_rows(rows: list[list[Any]]) -> str | None:
+    """Ώρα από κελί με «ΩΡΑ:» ή από μοτίβο HH:MM σε τυπικές στήλες."""
+    omega_hr = "\u03a9\u03a1\u0391"
+    for ri in (1, 2, 0):
+        if ri >= len(rows) or not rows[ri]:
+            continue
+        row = rows[ri]
+        for cell in row:
+            raw = clean_text(cell)
+            if not raw:
+                continue
+            if omega_hr in raw.upper():
+                u = raw.upper()
+                pos = u.find(omega_hr)
+                tail = raw[pos:]
+                if ":" in tail:
+                    return tail.split(":", 1)[1].strip()
+                return raw[pos + len(omega_hr) :].strip()
+    for ri in (1, 2):
+        if ri >= len(rows) or not rows[ri]:
+            continue
+        row = rows[ri]
+        for idx in (7, 8, 9, 6, 10, 5, 11, 12):
+            if idx >= len(row):
+                continue
+            raw = clean_text(row[idx])
+            if raw and re.match(r"^\d{1,2}:\d{2}", raw):
+                return raw
+    return None
+
+
+def _parse_summary_kpi_triplet(
+    rows: list[list[Any]],
+    r_ins: int,
+    r_brk: int,
+    r_tot: int,
+    col: int,
+    categories: list[dict[str, Any]],
+) -> tuple[int, int, int]:
+    """
+    Διαβάζει τριπλέτα (σε λειτουργία, με βλάβη, σύνολο) από σταθερό κελί.
+    Αν το σύνολο στο φύλλο είναι κενό/0 αλλά τα άλλα δύο νούμερα υπάρχουν, χρησιμοποιεί άθροισμα.
+    Αλλιώς συμπληρώνει από άθροισμα κατηγοριών.
+    """
+    def cell(r: int, c: int) -> Any:
+        if r < len(rows) and rows[r] and c < len(rows[r]):
+            return rows[r][c]
+        return None
+
+    ins = parse_number(cell(r_ins, col))
+    brk = parse_number(cell(r_brk, col))
+    tot_cell = parse_number(cell(r_tot, col))
+    cat_tot = sum(int(c["total"]) for c in categories)
+    cat_ins = sum(int(c["in_service"]) for c in categories)
+    cat_brk = sum(int(c["broken"]) for c in categories)
+    if tot_cell > 0:
+        return (ins, brk, tot_cell)
+    if ins > 0 or brk > 0:
+        return (ins, brk, ins + brk)
+    if cat_tot > 0:
+        return (cat_ins, cat_brk, cat_tot)
+    return (ins, brk, tot_cell)
+
+
 def engine_for_path(path: Path) -> str | None:
     if path.suffix.lower() == ".xls":
         return "xlrd"
@@ -401,9 +502,13 @@ def parse_summary_sheet(workbook_path: Path) -> dict[str, Any]:
     if len(rows) < 28:
         raise DashboardDataError("Το φύλλο συνολικής απεικόνισης είναι μικρότερο από το αναμενόμενο.")
 
-    report_date = format_date(rows[1][2])
-    raw_time = clean_text(rows[1][7]) or ""
-    report_time = raw_time.replace("\u03a9\u03a1\u0391:", "").strip() if raw_time else None
+    report_date = extract_report_date_from_summary_rows(rows) or format_date(
+        rows[1][2] if len(rows) > 1 and len(rows[1]) > 2 else None
+    )
+    report_time = extract_report_time_from_summary_rows(rows)
+    if not report_time and len(rows) > 1 and len(rows[1]) > 7:
+        raw_time = clean_text(rows[1][7]) or ""
+        report_time = raw_time.replace("\u03a9\u03a1\u0391:", "").strip() if raw_time else None
 
     categories_all: list[dict[str, Any]] = []
     categories_real: list[dict[str, Any]] = []
@@ -441,21 +546,31 @@ def parse_summary_sheet(workbook_path: Path) -> dict[str, Any]:
 
     collection_daily_availability = parse_collection_daily_availability(rows)
 
+    all_ins, all_brk, all_tot = _parse_summary_kpi_triplet(
+        rows, 6, 7, 8, 13, categories_all
+    )
+    real_ins, real_brk, real_tot = _parse_summary_kpi_triplet(
+        rows, 12, 13, 14, 13, categories_real
+    )
+    coll_total = parse_number(rows[27][13]) if len(rows) > 27 and rows[27] and len(rows[27]) > 13 else 0
+    if coll_total <= 0 and collection_daily_availability:
+        coll_total = sum(int(item["count"]) for item in collection_daily_availability)
+
     return {
         "title": clean_text(rows[0][0]) or "Dashboard Κατάστασης Στόλου Οχημάτων",
         "report_date": report_date,
         "report_time": report_time,
         "all_vehicles": {
-            "in_service": parse_number(rows[6][13]),
-            "broken": parse_number(rows[7][13]),
-            "total": parse_number(rows[8][13]),
+            "in_service": all_ins,
+            "broken": all_brk,
+            "total": all_tot,
         },
         "real_fleet": {
-            "in_service": parse_number(rows[12][13]),
-            "broken": parse_number(rows[13][13]),
-            "total": parse_number(rows[14][13]),
+            "in_service": real_ins,
+            "broken": real_brk,
+            "total": real_tot,
         },
-        "collection_vehicles_total": parse_number(rows[27][13]),
+        "collection_vehicles_total": coll_total,
         "collection_daily_availability": collection_daily_availability,
         "categories_all": categories_all,
         "categories_real": categories_real,
@@ -1238,7 +1353,9 @@ def build_dashboard_html() -> str:
     }});
 
     function formatPercent(value) {{
-      return `${{Number(value || 0).toFixed(1)}}%`;
+      const n = Number(value);
+      if (!Number.isFinite(n)) return '-';
+      return `${{n.toFixed(1)}}%`;
     }}
 
     function availabilityBadge(value) {{
