@@ -629,7 +629,7 @@ def build_dashboard_html() -> str:
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Live Dashboard Κατάστασης Στόλου Οχημάτων</title>
-  <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
+  <script src="https://cdn.plot.ly/plotly-3.4.0.min.js"></script>
   <style>
     :root {{
       --bg: #edf2ff;
@@ -1384,6 +1384,7 @@ def build_dashboard_html() -> str:
           text: allCats.map((item) => String(item.summary.in_service)),
           textposition: 'outside',
           textfont: {{ size: 11, color: '#1a1a1a' }},
+          cliponaxis: false,
         }},
         {{
           type: 'bar',
@@ -1394,13 +1395,14 @@ def build_dashboard_html() -> str:
           text: allCats.map((item) => String(item.summary.broken)),
           textposition: 'outside',
           textfont: {{ size: 11, color: '#1a1a1a' }},
+          cliponaxis: false,
         }},
       ], {{
         barmode: 'group',
         xaxis: {{ tickangle: -45, title: 'Κατηγορία' }},
         yaxis: {{ title: 'Πλήθος οχημάτων' }},
         height: Math.max(440, catNames.length * 24),
-        margin: {{ t: 64, b: 220, l: 50, r: 24 }},
+        margin: {{ t: 88, b: 220, l: 50, r: 24 }},
         legend: {{ orientation: 'h', y: 1.12 }},
       }}, {{ responsive: true }});
 
@@ -1416,10 +1418,11 @@ def build_dashboard_html() -> str:
           text: coll.map((item) => String(item.count)),
           textposition: 'outside',
           textfont: {{ size: 11, color: '#1a1a1a' }},
+          cliponaxis: false,
         }}], {{
           xaxis: {{ tickangle: -35, title: 'Κατηγορία' }},
           yaxis: {{ title: 'Διαθέσιμα οχήματα' }},
-          margin: {{ t: 56, b: 160, l: 50, r: 20 }},
+          margin: {{ t: 72, b: 160, l: 50, r: 20 }},
           height: Math.max(360, coll.length * 36),
         }}, {{ responsive: true }});
       }} else {{
